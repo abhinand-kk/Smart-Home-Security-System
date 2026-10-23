@@ -1,0 +1,320 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="description" content="Smart Home Motion Monitoring System - College IoT project using ESP32 and PIR motion sensor.">
+  <title>Smart Home Monitor — IoT Motion Monitoring System</title>
+  
+  <!-- Google Fonts: Inter -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  
+  <!-- Main Stylesheet -->
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+
+  <!-- ========================================================
+       1. NAVIGATION BAR
+       ======================================================== -->
+  <header class="navbar">
+    <div class="nav-container">
+      <a href="#home" class="nav-brand">
+        <!-- Clean Light Blue IoT Sensor Icon -->
+        <span class="brand-icon">
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+            <circle cx="12" cy="11" r="3"/>
+          </svg>
+        </span>
+        <span class="brand-name">Smart Home Monitor</span>
+      </a>
+
+      <!-- Mobile Hamburger Button -->
+      <button class="nav-toggle" id="navToggle" aria-label="Toggle navigation menu">
+        <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+          <line x1="3" y1="12" x2="21" y2="12"></line>
+          <line x1="3" y1="6" x2="21" y2="6"></line>
+          <line x1="3" y1="18" x2="21" y2="18"></line>
+        </svg>
+      </button>
+
+      <!-- Navigation Links -->
+      <nav class="nav-menu" id="navMenu">
+        <a href="#home" class="nav-link active">Home</a>
+        <a href="#monitoring" class="nav-link">Live Monitoring</a>
+        <a href="#about" class="nav-link">About</a>
+      </nav>
+    </div>
+  </header>
+
+  <!-- ========================================================
+       2. HOME / HERO SECTION
+       ======================================================== -->
+  <section class="hero-section" id="home">
+    <div class="container hero-container">
+      <div class="hero-badge">IoT College Project</div>
+      <h1 class="hero-title">Smart Home Motion Monitoring System</h1>
+      <p class="hero-description">
+        A smart security system designed to detect movement inside a home using an IoT motion sensor. 
+        In the future, real-time sensor data from an ESP32 microcontroller will be sent to a Python backend 
+        and displayed here.
+      </p>
+      <div class="hero-actions">
+        <a href="#monitoring" class="btn btn-primary" id="viewMonitoringBtn">
+          View Monitoring
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </a>
+        <a href="#about" class="btn btn-secondary">Learn About Setup</a>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       3. LIVE MONITORING SECTION
+       ======================================================== -->
+  <section class="monitoring-section" id="monitoring">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Live Monitoring</h2>
+        <p class="section-subtitle">Real-time status of the home motion monitoring sensor</p>
+      </div>
+
+      <!-- Demo Mode Notice -->
+      <div class="demo-banner">
+        <span class="demo-dot"></span>
+        <span class="demo-text"><strong>Demo Mode</strong> — Hardware connection pending</span>
+      </div>
+
+      <!-- Two Simple Status Cards -->
+      <div class="cards-grid">
+        
+        <!-- Card 1: Motion Status -->
+        <div class="card status-card" id="motionCard">
+          <div class="card-icon-wrap" id="motionIconWrap">
+            <svg id="safeIcon" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              <polyline points="9 12 11 14 15 10"/>
+            </svg>
+            <svg id="alertIcon" class="hidden" viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <span class="card-label">Motion Status</span>
+            <h3 class="card-value text-safe" id="motionStatusText">No Motion Detected</h3>
+            <span class="badge badge-safe" id="motionBadge">Normal State</span>
+          </div>
+        </div>
+
+        <!-- Card 2: Sensor Status -->
+        <div class="card status-card">
+          <div class="card-icon-wrap icon-neutral">
+            <svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="2" y="2" width="20" height="8" rx="2" ry="2"/>
+              <rect x="2" y="14" width="20" height="8" rx="2" ry="2"/>
+              <line x1="6" y1="6" x2="6.01" y2="6"/>
+              <line x1="6" y1="18" x2="6.01" y2="18"/>
+            </svg>
+          </div>
+          <div class="card-content">
+            <span class="card-label">Sensor Status</span>
+            <h3 class="card-value text-muted" id="sensorStatusText">Not Connected</h3>
+            <span class="badge badge-warning">Demo Mode</span>
+          </div>
+        </div>
+
+      </div>
+
+      <!-- Simulation Action Buttons -->
+      <div class="controls-card">
+        <div class="controls-info">
+          <h4 class="controls-title">Test Demo Interactions</h4>
+          <p class="controls-desc">Click the buttons below to test how the website responds when motion is detected.</p>
+        </div>
+        <div class="controls-buttons">
+          <button class="btn btn-danger" id="simulateMotionBtn">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+            </svg>
+            Simulate Motion
+          </button>
+          <button class="btn btn-outline" id="resetMotionBtn">
+            <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+            Reset Status
+          </button>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       4. RECENT ACTIVITY SECTION
+       ======================================================== -->
+  <section class="activity-section" id="activity">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">Recent Activity</h2>
+        <p class="section-subtitle">Sample log of recent motion detection events (Demonstration records)</p>
+      </div>
+
+      <div class="table-card">
+        <div class="table-responsive">
+          <table class="activity-table">
+            <thead>
+              <tr>
+                <th>Date</th>
+                <th>Time</th>
+                <th>Status</th>
+              </tr>
+            </thead>
+            <tbody id="activityTableBody">
+              <!-- Default sample demonstration rows -->
+              <tr>
+                <td>Today</td>
+                <td>11:20 AM</td>
+                <td><span class="badge badge-danger">Motion Detected</span></td>
+              </tr>
+              <tr>
+                <td>Today</td>
+                <td>11:15 AM</td>
+                <td><span class="badge badge-safe">No Motion</span></td>
+              </tr>
+              <tr>
+                <td>Today</td>
+                <td>10:45 AM</td>
+                <td><span class="badge badge-safe">No Motion</span></td>
+              </tr>
+              <tr>
+                <td>Yesterday</td>
+                <td>08:30 PM</td>
+                <td><span class="badge badge-danger">Motion Detected</span></td>
+              </tr>
+              <tr>
+                <td>Yesterday</td>
+                <td>06:00 PM</td>
+                <td><span class="badge badge-neutral">System Started</span></td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="table-footer">
+          <span class="text-sm">Showing recent demonstration records</span>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       5. ABOUT SECTION
+       ======================================================== -->
+  <section class="about-section" id="about">
+    <div class="container">
+      <div class="section-header">
+        <h2 class="section-title">About This Project</h2>
+        <p class="section-subtitle">Overview of the technology and components planned for this IoT system</p>
+      </div>
+
+      <div class="about-grid">
+        
+        <!-- Component 1: ESP32 -->
+        <div class="about-card">
+          <div class="about-icon">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+              <rect x="4" y="4" width="16" height="16" rx="2"/>
+              <rect x="9" y="9" width="6" height="6"/>
+              <line x1="9" y1="1" x2="9" y2="4"/>
+              <line x1="15" y1="1" x2="15" y2="4"/>
+              <line x1="9" y1="20" x2="9" y2="23"/>
+              <line x1="15" y1="20" x2="15" y2="23"/>
+              <line x1="20" y1="9" x2="23" y2="9"/>
+              <line x1="20" y1="14" x2="23" y2="14"/>
+              <line x1="1" y1="9" x2="4" y2="9"/>
+              <line x1="1" y1="14" x2="4" y2="14"/>
+            </svg>
+          </div>
+          <h3 class="about-card-title">ESP32 Microcontroller</h3>
+          <p class="about-card-desc">
+            A versatile Wi-Fi enabled microcontroller board that reads digital signals from the motion sensor and sends data over local Wi-Fi.
+          </p>
+        </div>
+
+        <!-- Component 2: PIR Motion Sensor -->
+        <div class="about-card">
+          <div class="about-icon">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+              <circle cx="12" cy="12" r="10"/>
+              <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/>
+              <path d="M2 12h20"/>
+            </svg>
+          </div>
+          <h3 class="about-card-title">PIR Motion Sensor</h3>
+          <p class="about-card-desc">
+            A Passive Infrared (HC-SR501) sensor that senses changes in infrared radiation emitted by moving people or warm bodies within its field of view.
+          </p>
+        </div>
+
+        <!-- Component 3: Python Backend -->
+        <div class="about-card">
+          <div class="about-icon">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+              <polyline points="16 18 22 12 16 6"/>
+              <polyline points="8 6 2 12 8 18"/>
+            </svg>
+          </div>
+          <h3 class="about-card-title">Python Backend (Planned)</h3>
+          <p class="about-card-desc">
+            A future web API server created with Python (such as Flask) that receives HTTP requests from the ESP32 and provides data to this website.
+          </p>
+        </div>
+
+        <!-- Component 4: Database -->
+        <div class="about-card">
+          <div class="about-icon">
+            <svg viewBox="0 0 24 24" width="24" height="24" fill="none" stroke="currentColor" stroke-width="2">
+              <ellipse cx="12" cy="5" rx="9" ry="3"/>
+              <path d="M21 12c0 1.66-4 3-9 3s-9-1.34-9-3"/>
+              <path d="M3 5v14c0 1.66 4 3 9 3s9-1.34 9-3V5"/>
+            </svg>
+          </div>
+          <h3 class="about-card-title">Motion History Database (Planned)</h3>
+          <p class="about-card-desc">
+            A structured database (such as SQLite) to securely store timestamped motion events for historical tracking and review.
+          </p>
+        </div>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ========================================================
+       6. FOOTER
+       ======================================================== -->
+  <footer class="footer">
+    <div class="container footer-container">
+      <div class="footer-left">
+        <strong>Smart Home Motion Monitoring System</strong>
+        <p class="footer-desc">
+          College IoT Project — Designed for smart home security using an ESP32 microcontroller and a PIR motion sensor.
+        </p>
+      </div>
+      <div class="footer-right">
+        <span class="footer-note">Demo Website • Phase 1 Frontend</span>
+      </div>
+    </div>
+  </footer>
+
+  <!-- JavaScript -->
+  <script src="js/script.js"></script>
+</body>
+</html>
