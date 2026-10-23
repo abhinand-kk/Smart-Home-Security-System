@@ -3,17 +3,29 @@
  * Live API Connected & Responsive Client Script
  * 
  * Connects to Python Flask backend (/api/status, /api/events, /api/motion)
- * with graceful offline fallback and simulation capabilities.
+ * with graceful offline fallback, cloud hosting support, and simulation capabilities.
  */
 
 document.addEventListener('DOMContentLoaded', function () {
   'use strict';
 
   // -------------------------------------------------------------------------
-  // 1. API Configuration
+  // 1. API Configuration & Cloud Detection
   // -------------------------------------------------------------------------
-  // Configurable API base URL (falls back to local Flask server on port 5000)
-  const API_BASE_URL = localStorage.getItem('smartguard_api_url') || 'http://localhost:5000/api';
+  function resolveApiUrl() {
+    const custom = localStorage.getItem('smartguard_api_url');
+    if (custom) return custom.replace(/\/+$/, '');
+
+    // If served over HTTPS (e.g. Vercel deployment), prevent mixed-content blocking
+    if (window.location.protocol === 'https:') {
+      return '/api';
+    }
+
+    // Default to local Flask backend when running locally on HTTP / localhost
+    return 'http://localhost:5000/api';
+  }
+
+  const API_BASE_URL = resolveApiUrl();
   const POLLING_INTERVAL_MS = 2000; // Poll every 2 seconds
 
   let isBackendConnected = false;
@@ -132,10 +144,29 @@ document.addEventListener('DOMContentLoaded', function () {
         sensorBadge.className = 'badge badge-warning';
       }
       if (demoBanner) {
+        const isHttps = window.location.protocol === 'https:';
+        const configPrompt = isHttps ? ` | <a href="#" id="setCloudApiBtn" style="color:inherit;text-decoration:underline;font-weight:600;">Configure Cloud API</a>` : '';
         demoBanner.innerHTML = `
           <span class="demo-dot"></span>
-          <span class="demo-text"><strong>Demo Mode</strong> — Hardware connection pending. Testing enabled.</span>
+          <span class="demo-text"><strong>Demo Mode</strong> — Hardware connection pending. Testing enabled.${configPrompt}</span>
         `;
+        
+        const setCloudApiBtn = document.getElementById('setCloudApiBtn');
+        if (setCloudApiBtn) {
+          setCloudApiBtn.addEventListener('click', function (e) {
+            e.preventDefault();
+            const current = localStorage.getItem('smartguard_api_url') || '';
+            const newUrl = prompt('Enter your deployed Flask backend API URL (e.g., https://your-backend.onrender.com/api):', current);
+            if (newUrl !== null) {
+              if (newUrl.trim() === '') {
+                localStorage.removeItem('smartguard_api_url');
+              } else {
+                localStorage.setItem('smartguard_api_url', newUrl.trim());
+              }
+              window.location.reload();
+            }
+          });
+        }
       }
     }
   }
