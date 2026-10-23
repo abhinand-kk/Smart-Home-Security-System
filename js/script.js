@@ -1,24 +1,42 @@
 /**
  * Smart Home Motion Monitoring System
- * Simple & Beginner-Friendly JavaScript
+ * Live API Connected & Responsive Client Script
+ * 
+ * Connects to Python Flask backend (/api/status, /api/events, /api/motion)
+ * with graceful offline fallback and simulation capabilities.
  */
 
 document.addEventListener('DOMContentLoaded', function () {
   'use strict';
 
   // -------------------------------------------------------------------------
-  // 1. DOM Elements
+  // 1. API Configuration
+  // -------------------------------------------------------------------------
+  // Configurable API base URL (falls back to local Flask server on port 5000)
+  const API_BASE_URL = localStorage.getItem('smartguard_api_url') || 'http://localhost:5000/api';
+  const POLLING_INTERVAL_MS = 2000; // Poll every 2 seconds
+
+  let isBackendConnected = false;
+  let pollingTimer = null;
+
+  // -------------------------------------------------------------------------
+  // 2. DOM Elements Cache
   // -------------------------------------------------------------------------
   const navToggle = document.getElementById('navToggle');
   const navMenu = document.getElementById('navMenu');
   const navLinks = document.querySelectorAll('.nav-link');
   
   // Status Card Elements
+  const motionCard = document.getElementById('motionCard');
   const motionStatusText = document.getElementById('motionStatusText');
   const motionBadge = document.getElementById('motionBadge');
   const motionIconWrap = document.getElementById('motionIconWrap');
   const safeIcon = document.getElementById('safeIcon');
   const alertIcon = document.getElementById('alertIcon');
+
+  const sensorStatusText = document.getElementById('sensorStatusText');
+  const sensorBadge = document.querySelector('.card:nth-child(2) .badge') || document.getElementById('sensorBadge');
+  const demoBanner = document.querySelector('.demo-banner');
 
   // Control Buttons
   const simulateMotionBtn = document.getElementById('simulateMotionBtn');
@@ -26,14 +44,13 @@ document.addEventListener('DOMContentLoaded', function () {
   const activityTableBody = document.getElementById('activityTableBody');
 
   // -------------------------------------------------------------------------
-  // 2. Mobile Navigation Toggle
+  // 3. Mobile Navigation Toggle
   // -------------------------------------------------------------------------
   if (navToggle && navMenu) {
     navToggle.addEventListener('click', function () {
       navMenu.classList.toggle('open');
     });
 
-    // Close menu when a link is clicked
     navLinks.forEach(function (link) {
       link.addEventListener('click', function () {
         navMenu.classList.remove('open');
@@ -41,7 +58,7 @@ document.addEventListener('DOMContentLoaded', function () {
     });
   }
 
-  // Active Link on Scroll
+  // Active Link Tracking on Scroll
   window.addEventListener('scroll', function () {
     const sections = document.querySelectorAll('section');
     const scrollPos = window.scrollY + 100;
@@ -63,90 +80,230 @@ document.addEventListener('DOMContentLoaded', function () {
   });
 
   // -------------------------------------------------------------------------
-  // 3. Helper: Format Current Time (e.g. 11:45 AM)
+  // 4. Update UI Components based on State
   // -------------------------------------------------------------------------
-  function getCurrentTimeString() {
-    const now = new Date();
-    let hours = now.getHours();
-    const minutes = now.getMinutes();
-    const ampm = hours >= 12 ? 'PM' : 'AM';
+  function setMotionDisplay(isMotion) {
+    if (!motionStatusText || !motionBadge || !motionIconWrap) return;
 
-    hours = hours % 12;
-    hours = hours ? hours : 12; // '0' should be '12'
-    const formattedMinutes = minutes < 10 ? '0' + minutes : minutes;
+    if (isMotion) {
+      motionStatusText.textContent = 'Motion Detected';
+      motionStatusText.className = 'card-value text-alert';
 
-    return hours + ':' + formattedMinutes + ' ' + ampm;
+      motionBadge.textContent = 'Motion Detected';
+      motionBadge.className = 'badge badge-danger';
+
+      motionIconWrap.className = 'card-icon-wrap alert';
+      if (safeIcon) safeIcon.classList.add('hidden');
+      if (alertIcon) alertIcon.classList.remove('hidden');
+    } else {
+      motionStatusText.textContent = 'No Motion Detected';
+      motionStatusText.className = 'card-value text-safe';
+
+      motionBadge.textContent = 'Normal State';
+      motionBadge.className = 'badge badge-safe';
+
+      motionIconWrap.className = 'card-icon-wrap';
+      if (safeIcon) safeIcon.classList.remove('hidden');
+      if (alertIcon) alertIcon.classList.add('hidden');
+    }
+  }
+
+  function setSensorDisplay(isOnline, dbType) {
+    if (!sensorStatusText) return;
+
+    if (isOnline) {
+      sensorStatusText.textContent = 'ESP32 Connected';
+      sensorStatusText.className = 'card-value text-safe';
+      if (sensorBadge) {
+        sensorBadge.textContent = `Online (${dbType || 'Postgres'})`;
+        sensorBadge.className = 'badge badge-safe';
+      }
+      if (demoBanner) {
+        demoBanner.innerHTML = `
+          <span class="demo-dot" style="background-color: var(--color-safe);"></span>
+          <span class="demo-text"><strong>Live System Active</strong> — ESP32 hardware streaming to Flask & ${dbType || 'Database'}</span>
+        `;
+      }
+    } else {
+      sensorStatusText.textContent = isBackendConnected ? 'Hardware Standby' : 'Backend Connecting...';
+      sensorStatusText.className = 'card-value text-muted';
+      if (sensorBadge) {
+        sensorBadge.textContent = isBackendConnected ? 'Waiting for ESP32' : 'Local Demo Mode';
+        sensorBadge.className = 'badge badge-warning';
+      }
+      if (demoBanner) {
+        demoBanner.innerHTML = `
+          <span class="demo-dot"></span>
+          <span class="demo-text"><strong>Demo Mode</strong> — Hardware connection pending. Testing enabled.</span>
+        `;
+      }
+    }
   }
 
   // -------------------------------------------------------------------------
-  // 4. Add Simulated Event to Recent Activity Table
+  // 5. Render History Table from Live Database
   // -------------------------------------------------------------------------
-  function addActivityEvent(statusText, badgeClass) {
-    if (!activityTableBody) return;
+  function renderEventsTable(events) {
+    if (!activityTableBody || !Array.isArray(events)) return;
 
+    if (events.length === 0) {
+      activityTableBody.innerHTML = `
+        <tr>
+          <td colspan="3" style="text-align: center; color: var(--text-muted); padding: 20px;">
+            No motion events recorded in the database yet.
+          </td>
+        </tr>
+      `;
+      return;
+    }
+
+    let html = '';
+    events.slice(0, 8).forEach(function (ev) {
+      const isMotion = ev.event_type === 'MOTION_DETECTED';
+      const badgeClass = isMotion ? 'badge-danger' : 'badge-safe';
+      const statusLabel = isMotion ? 'Motion Detected' : 'No Motion';
+      const simTag = ev.is_simulated ? ' (Sim)' : '';
+
+      html += `
+        <tr>
+          <td>${ev.formatted_date || 'Today'}</td>
+          <td>${ev.formatted_time || 'Just now'}</td>
+          <td><span class="badge ${badgeClass}">${statusLabel}${simTag}</span></td>
+        </tr>
+      `;
+    });
+
+    activityTableBody.innerHTML = html;
+  }
+
+  // -------------------------------------------------------------------------
+  // 6. Polling: Fetch Live Status & Events from API
+  // -------------------------------------------------------------------------
+  async function fetchLiveStatus() {
+    try {
+      const response = await fetch(`${API_BASE_URL}/status`, {
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      isBackendConnected = true;
+
+      // Update Motion Status Card
+      const hasMotion = data.current_motion_state === 'MOTION_DETECTED';
+      setMotionDisplay(hasMotion);
+
+      // Update Sensor Status Card
+      setSensorDisplay(data.is_online, data.database_type);
+
+    } catch (err) {
+      // Backend unavailable or starting up -> fall back to graceful demo state
+      isBackendConnected = false;
+      setSensorDisplay(false, 'Local');
+    }
+  }
+
+  async function fetchLiveEvents() {
+    if (!isBackendConnected) return;
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/events?limit=8`, {
+        headers: { 'Accept': 'application/json' }
+      });
+
+      if (response.ok) {
+        const data = await response.json();
+        if (data.events && data.events.length > 0) {
+          renderEventsTable(data.events);
+        }
+      }
+    } catch (err) {
+      // Non-critical; retain table as is
+    }
+  }
+
+  // Synchronized Poll Cycle
+  async function pollBackend() {
+    await fetchLiveStatus();
+    await fetchLiveEvents();
+  }
+
+  // -------------------------------------------------------------------------
+  // 7. Interactive Simulation Actions (Post to Real Backend)
+  // -------------------------------------------------------------------------
+  async function sendSimulatedEvent(stateType) {
+    const isMotion = stateType === 'MOTION_DETECTED';
+
+    // Immediate UI responsiveness
+    setMotionDisplay(isMotion);
+
+    try {
+      const response = await fetch(`${API_BASE_URL}/motion`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json'
+        },
+        body: JSON.stringify({
+          device_id: 'dashboard-sim-01',
+          state: stateType,
+          gpio_pin: 27,
+          is_simulated: true,
+          details: `Simulated by dashboard user at ${new Date().toLocaleTimeString()}`
+        })
+      });
+
+      if (response.ok) {
+        // Refresh table immediately with new DB row
+        fetchLiveEvents();
+      } else {
+        // Fallback local table row if backend returned error
+        addLocalTableRow(stateType);
+      }
+    } catch (err) {
+      // Fallback local table row if backend offline
+      addLocalTableRow(stateType);
+    }
+  }
+
+  function addLocalTableRow(stateType) {
+    if (!activityTableBody) return;
+    const isMotion = stateType === 'MOTION_DETECTED';
     const row = document.createElement('tr');
-    const timeString = getCurrentTimeString();
+    const now = new Date();
+    const timeStr = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
 
     row.innerHTML = `
       <td>Today</td>
-      <td>${timeString}</td>
-      <td><span class="badge ${badgeClass}">${statusText}</span></td>
+      <td>${timeStr}</td>
+      <td><span class="badge ${isMotion ? 'badge-danger' : 'badge-safe'}">${isMotion ? 'Motion Detected (Sim)' : 'No Motion (Sim)'}</span></td>
     `;
-
-    // Insert at the very top of the table
     activityTableBody.insertBefore(row, activityTableBody.firstChild);
-
-    // Keep table to at most 8 rows for a clean presentation
     if (activityTableBody.children.length > 8) {
       activityTableBody.removeChild(activityTableBody.lastChild);
     }
   }
 
-  // -------------------------------------------------------------------------
-  // 5. Simulate Motion Detected Button
-  // -------------------------------------------------------------------------
   if (simulateMotionBtn) {
     simulateMotionBtn.addEventListener('click', function () {
-      // Update text to "Motion Detected"
-      motionStatusText.textContent = 'Motion Detected';
-      motionStatusText.className = 'card-value text-alert';
-
-      // Update badge
-      motionBadge.textContent = 'Motion Detected';
-      motionBadge.className = 'badge badge-danger';
-
-      // Update icon container and icons
-      motionIconWrap.className = 'card-icon-wrap alert';
-      safeIcon.classList.add('hidden');
-      alertIcon.classList.remove('hidden');
-
-      // Add to demonstration activity table
-      addActivityEvent('Motion Detected', 'badge-danger');
+      sendSimulatedEvent('MOTION_DETECTED');
     });
   }
 
-  // -------------------------------------------------------------------------
-  // 6. Reset Status Button
-  // -------------------------------------------------------------------------
   if (resetMotionBtn) {
     resetMotionBtn.addEventListener('click', function () {
-      // Update text back to "No Motion Detected"
-      motionStatusText.textContent = 'No Motion Detected';
-      motionStatusText.className = 'card-value text-safe';
-
-      // Update badge
-      motionBadge.textContent = 'Normal State';
-      motionBadge.className = 'badge badge-safe';
-
-      // Update icon container and icons
-      motionIconWrap.className = 'card-icon-wrap';
-      safeIcon.classList.remove('hidden');
-      alertIcon.classList.add('hidden');
-
-      // Add to demonstration activity table
-      addActivityEvent('No Motion', 'badge-safe');
+      sendSimulatedEvent('NO_MOTION');
     });
   }
 
-  console.log('Smart Home Motion Monitoring System website initialized in demo mode.');
+  // -------------------------------------------------------------------------
+  // 8. Start Background Polling
+  // -------------------------------------------------------------------------
+  pollBackend();
+  pollingTimer = setInterval(pollBackend, POLLING_INTERVAL_MS);
+
+  console.log(`[SmartGuard] Initialized. Polling backend at ${API_BASE_URL} every ${POLLING_INTERVAL_MS / 1000}s`);
 });
