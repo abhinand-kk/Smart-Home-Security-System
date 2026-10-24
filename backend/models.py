@@ -69,7 +69,10 @@ class MotionEvent(Base):
 
 def init_db(database_uri):
     """Initialize database tables and return engine and sessionmaker."""
-    engine = create_engine(database_uri, pool_pre_ping=True)
+    engine_kwargs = {"pool_pre_ping": True}
+    if database_uri.startswith("postgresql"):
+        engine_kwargs["pool_recycle"] = 300
+    engine = create_engine(database_uri, **engine_kwargs)
     Base.metadata.create_all(engine)
     Session = sessionmaker(bind=engine)
     return engine, Session

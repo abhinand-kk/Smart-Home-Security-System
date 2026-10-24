@@ -30,6 +30,10 @@ class Config:
         # Compatibility fix for cloud providers that still emit postgres:// instead of postgresql://
         if raw_db_url.startswith("postgres://"):
             raw_db_url = raw_db_url.replace("postgres://", "postgresql://", 1)
+        # Ensure sslmode=require for Neon PostgreSQL
+        if "neon.tech" in raw_db_url and "sslmode=" not in raw_db_url:
+            separator = "&" if "?" in raw_db_url else "?"
+            raw_db_url = f"{raw_db_url}{separator}sslmode=require"
         SQLALCHEMY_DATABASE_URI = raw_db_url
         DB_TYPE = "PostgreSQL"
     else:
