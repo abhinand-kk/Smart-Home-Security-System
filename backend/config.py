@@ -15,11 +15,35 @@ class Config:
     """Application Configuration supporting both PostgreSQL and SQLite fallback."""
     SECRET_KEY = os.getenv("SECRET_KEY", "dev-secret-key-change-in-production")
     
-    # Device authentication key for ESP32 HTTP requests
-    API_KEY = os.getenv("ESP32_API_KEY", "smartguard-esp32-secret-key-2026")
+    # Device authentication key for ESP32 HTTP requests (Rotated secret key)
+    API_KEY = os.getenv("ESP32_API_KEY", "smartguard-sec-key-8e9f2a4b1c7d")
     
-    # Allowed frontend origins for CORS
-    CORS_ORIGINS = os.getenv("CORS_ORIGINS", "*").split(",")
+    # Default physical device identifier
+    DEFAULT_DEVICE_ID = os.getenv("DEFAULT_DEVICE_ID", "esp32-pir-01")
+    SIMULATION_DEVICE_ID = "dashboard-sim-01"
+
+    # Allowed frontend origins for CORS (Always includes production Vercel & local dev)
+    DEFAULT_ALLOWED_ORIGINS = [
+        "https://smart-home-security-system-backend.vercel.app",
+        "http://localhost:8080",
+        "http://localhost:5000",
+        "http://localhost:3000",
+        "http://127.0.0.1:8080",
+        "http://127.0.0.1:5000",
+        "http://127.0.0.1:3000"
+    ]
+    raw_cors = os.getenv("CORS_ORIGINS")
+    if raw_cors:
+        if raw_cors.strip() == "*":
+            CORS_ORIGINS = ["*"]
+        else:
+            parsed = [o.strip() for o in raw_cors.split(",") if o.strip()]
+            for orig in DEFAULT_ALLOWED_ORIGINS:
+                if orig not in parsed:
+                    parsed.append(orig)
+            CORS_ORIGINS = parsed
+    else:
+        CORS_ORIGINS = DEFAULT_ALLOWED_ORIGINS
     
     # Seconds before a device without incoming events/heartbeats is marked "Offline"
     HEARTBEAT_TIMEOUT_SECONDS = int(os.getenv("HEARTBEAT_TIMEOUT_SECONDS", "45"))

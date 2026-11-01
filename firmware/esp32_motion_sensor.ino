@@ -12,6 +12,13 @@
  *   - HC-SR501 GND -> ESP32 GND
  *   - HC-SR501 OUT -> ESP32 GPIO 27 (Digital Input with internal pull-down)
  *   - On-board LED -> GPIO 2 (Visual status indicator: blinks on Wi-Fi, solid on motion)
+ *
+ * HC-SR501 Hardware Calibration:
+ *   - Tx (Time Delay Potentiometer, right): Turn FULLY COUNTER-CLOCKWISE to
+ *     minimize delay to ~3 seconds. If turned clockwise, output stays HIGH for
+ *     30s to 300s after person moves away!
+ *   - Sx (Sensitivity Potentiometer, left): Adjust to ~50% to prevent false triggers.
+ *   - Jumper: Set to 'L' (single trigger) or 'H' (retriggering).
  * =============================================================================
  */
 
@@ -23,21 +30,24 @@
 // -----------------------------------------------------------------------------
 // 1. Wi-Fi & Central Backend Server Configuration
 // -----------------------------------------------------------------------------
-// Your phone hotspot SSID
-const char* WIFI_SSID     = "POCO F6";
+// Load credentials from local secrets.h (ignored by Git).
+// If missing, copy firmware/secrets.example.h to firmware/secrets.h and edit it.
+#if __has_include("secrets.h")
+  #include "secrets.h"
+#else
+  #warning "secrets.h not found. Using placeholder defaults. Copy secrets.example.h to secrets.h"
+  #define WIFI_SSID     "YOUR_WIFI_SSID"
+  #define WIFI_PASSWORD "YOUR_WIFI_PASSWORD"
+  #define BACKEND_URL   "https://smartguard-api-c01f.onrender.com/api/motion"
+  #define DEVICE_ID     "esp32-pir-01"
+  #define API_KEY       "YOUR_ROTATED_ESP32_API_KEY"
+#endif
 
-// >>> FILL IN YOUR HOTSPOT PASSWORD HERE <<<
-const char* WIFI_PASSWORD = "YOUR_WIFI_PASSWORD_HERE";
-
-// Central Python Flask Backend Endpoint
-// Automatically set to your laptop's Wi-Fi IP (Port 5000) on the POCO F6 network.
-// If your laptop's IP changes in the future, update the IP address below.
-const char* BACKEND_URL = "http://192.168.60.143:5000/api/motion";
-
-// Device Identifier & Secret API Key
-// MUST match the ESP32_API_KEY defined in the backend .env file.
-const char* DEVICE_ID = "esp32-pir-01";
-const char* API_KEY   = "smartguard-esp32-secret-key-2026";
+const char* wifiSsid     = WIFI_SSID;
+const char* wifiPassword = WIFI_PASSWORD;
+const char* backendUrl   = BACKEND_URL;
+const char* deviceId     = DEVICE_ID;
+const char* apiKey       = API_KEY;
 
 // -----------------------------------------------------------------------------
 // 2. Hardware Pin Configuration & Timing Constants
@@ -157,9 +167,10 @@ bool sendEventToBackend(const char* stateType, const char* details) {
 
   HTTPClient http;
   bool isHttps = (strncmp(BACKEND_URL, "https://", 8) == 0);
+  WiFiClientSecure *client = nullptr;
 
   if (isHttps) {
-    WiFiClientSecure *client = new WiFiClientSecure;
+    client = new WiFiClientSecure;
     if (client) {
       client->setInsecure(); // Or client->setCACert(root_ca) for strict verification
       http.begin(*client, BACKEND_URL);
@@ -176,12 +187,17 @@ bool sendEventToBackend(const char* stateType, const char* details) {
   // Device authentication header (Kept secure; not printed to Serial)
   http.addHeader("X-API-Key", API_KEY);
 
+  // Read current physical PIR pin state to report in payload
+  int currentPirState = digitalRead(PIR_PIN);
+
   // Construct JSON payload matching the Flask backend schema
   String ipStr = WiFi.localIP().toString();
   String payload = "{";
   payload += "\"device_id\":\"" + String(DEVICE_ID) + "\",";
   payload += "\"state\":\"" + String(stateType) + "\",";
   payload += "\"gpio_pin\":" + String(PIR_PIN) + ",";
+  payload += "\"pir_state\":" + String(currentPirState) + ",";
+  payload += "\"motion_detected\":" + String(currentPirState == HIGH ? "true" : "false") + ",";
   payload += "\"is_simulated\":false,";
   payload += "\"ip_address\":\"" + ipStr + "\",";
   payload += "\"details\":\"" + String(details) + "\"";
@@ -189,10 +205,13 @@ bool sendEventToBackend(const char* stateType, const char* details) {
 
   Serial.print("[HTTP] Dispatching payload to Flask (State: ");
   Serial.print(stateType);
+  Serial.print(", Pin 27: ");
+  Serial.print(currentPirState == HIGH ? "HIGH" : "LOW");
   Serial.println(")...");
 
   int httpCode = -1;
   int retry = 0;
+  bool success = false;
 
   while (retry < MAX_RETRY_ATTEMPTS) {
     httpCode = http.POST(payload);
@@ -207,8 +226,8 @@ bool sendEventToBackend(const char* stateType, const char* details) {
         Serial.println(response);
         consecutiveFailures = 0;
         totalMotionEventsSent++;
-        http.end();
-        return true;
+        success = true;
+        break;
       }
     } else {
       Serial.print("[HTTP] POST attempt failed, error: ");
@@ -218,12 +237,21 @@ bool sendEventToBackend(const char* stateType, const char* details) {
     }
   }
 
-  consecutiveFailures++;
-  Serial.print("[HTTP] Warning: Transmission failed after ");
-  Serial.print(MAX_RETRY_ATTEMPTS);
-  Serial.println(" attempts. Will retry on next event.");
+  if (!success) {
+    consecutiveFailures++;
+    Serial.print("[HTTP] Warning: Transmission failed after ");
+    Serial.print(MAX_RETRY_ATTEMPTS);
+    Serial.println(" attempts. Will retry on next event.");
+  }
+
   http.end();
-  return false;
+  // CRITICAL FIX: Explicitly delete client to prevent ESP32 heap memory leak
+  if (client != nullptr) {
+    delete client;
+    client = nullptr;
+  }
+
+  return success;
 }
 
 // -----------------------------------------------------------------------------
@@ -302,18 +330,26 @@ void loop() {
   // State Transition Detection (only fires when state changes)
   if ((millis() - lastDebounceTime) > DEBOUNCE_DELAY_MS) {
     if (currentReading != lastStablePirState) {
+      int previousState = lastStablePirState;
       lastStablePirState = currentReading;
 
+      bool dispatched = false;
       if (lastStablePirState == HIGH) {
         // State 1: Motion Detected
         Serial.println("\n>>> [EVENT] MOTION DETECTED! (GPIO 27 -> HIGH) <<<");
         digitalWrite(STATUS_LED_PIN, HIGH); // Turn LED ON
-        sendEventToBackend("MOTION_DETECTED", "Infrared disturbance detected by HC-SR501");
+        dispatched = sendEventToBackend("MOTION_DETECTED", "Infrared disturbance detected by HC-SR501");
       } else {
         // State 2: Motion Cleared / Standby
         Serial.println("\n--- [EVENT] MOTION CLEARED. (GPIO 27 -> LOW) ---");
         digitalWrite(STATUS_LED_PIN, LOW);  // Turn LED OFF
-        sendEventToBackend("NO_MOTION", "Sensor returned to quiet state");
+        dispatched = sendEventToBackend("NO_MOTION", "Sensor returned to quiet state");
+      }
+
+      // If network transmission failed, revert lastStablePirState so loop() will retry dispatching
+      if (!dispatched) {
+        Serial.println("[EVENT] Dispatch failed. Reverting state to retry on next cycle.");
+        lastStablePirState = previousState;
       }
 
       lastHeartbeatTime = millis(); // Reset heartbeat timer upon active transition

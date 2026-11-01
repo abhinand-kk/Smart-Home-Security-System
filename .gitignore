@@ -7,6 +7,8 @@
 .env.local
 .env.*.local
 *.env
+firmware/secrets.h
+secrets.h
 
 # SQLite local databases
 *.db

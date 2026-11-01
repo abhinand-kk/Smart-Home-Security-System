@@ -69,15 +69,16 @@ def record_motion():
     if not payload:
         return jsonify({"error": "Invalid request body; JSON required"}), 400
 
-    # Device authentication check (Allows simulation if explicit demo flag is sent with valid demo header)
+    # Device authentication check (Allows simulation if explicit demo flag is sent)
     is_simulated = bool(payload.get("is_simulated", False))
-    if not is_simulated and not authenticate_request():
-        return jsonify({"error": "Unauthorized: Invalid or missing API key"}), 401
-
-    # Extract & validate fields
-    device_id = payload.get("device_id", "esp32-pir-01").strip()
-    if not device_id:
-        return jsonify({"error": "Missing required field: device_id"}), 400
+    if is_simulated:
+        device_id = Config.SIMULATION_DEVICE_ID
+    else:
+        if not authenticate_request():
+            return jsonify({"error": "Unauthorized: Invalid or missing API key"}), 401
+        device_id = payload.get("device_id", Config.DEFAULT_DEVICE_ID).strip()
+        if not device_id:
+            device_id = Config.DEFAULT_DEVICE_ID
 
     raw_state = str(payload.get("state", "")).strip().upper()
     valid_states = {"MOTION_DETECTED", "NO_MOTION", "HEARTBEAT"}
@@ -111,12 +112,40 @@ def record_motion():
         new_event = None
 
         if raw_state == "HEARTBEAT":
-            # Heartbeats update heartbeat timestamp without state transition
+            # Heartbeats update heartbeat timestamp
             device.last_seen_at = now_utc
             device.is_online = True
             if client_ip:
                 device.ip_address = client_ip
             message = "Heartbeat recorded successfully"
+
+            # State reconciliation: Check if physical PIR reading is included in heartbeat payload
+            pir_state = payload.get("pir_state")
+            motion_detected = payload.get("motion_detected")
+            if pir_state is not None or motion_detected is not None:
+                is_pin_high = False
+                if motion_detected is not None:
+                    is_pin_high = bool(motion_detected)
+                elif isinstance(pir_state, (int, float)):
+                    is_pin_high = (pir_state == 1)
+                elif isinstance(pir_state, str):
+                    is_pin_high = pir_state.strip().upper() in ("1", "HIGH", "TRUE")
+
+                # If physical sensor is quiet (LOW) but DB is stuck on MOTION_DETECTED (e.g. missed transition packet)
+                if not is_pin_high and previous_state == "MOTION_DETECTED":
+                    is_transition = True
+                    device.current_motion_state = "NO_MOTION"
+                    new_event = MotionEvent(
+                        device_id=device_id,
+                        event_type="NO_MOTION",
+                        previous_state=previous_state,
+                        gpio_pin=gpio_pin,
+                        timestamp=now_utc,
+                        is_simulated=is_simulated,
+                        details="State reconciled to NO_MOTION via physical sensor reading in keep-alive heartbeat"
+                    )
+                    session.add(new_event)
+                    message = "Heartbeat recorded; motion state reconciled to NO_MOTION"
         else:
             # Motion state update
             device.last_seen_at = now_utc
@@ -164,14 +193,41 @@ def record_motion():
 # -----------------------------------------------------------------------------
 @app.route("/api/status", methods=["GET"])
 def get_status():
-    """Returns current motion state, online/offline status, and summary metrics."""
+    """Returns current motion state, online/offline status, and summary metrics for the physical ESP32 device."""
     now_utc = datetime.now(timezone.utc)
     timeout = timedelta(seconds=Config.HEARTBEAT_TIMEOUT_SECONDS)
+    target_device_id = request.args.get("device_id", Config.DEFAULT_DEVICE_ID)
 
     with Session() as session:
-        device = session.query(DeviceStatus).first()
+        # Prioritize physical hardware device (esp32-pir-01)
+        device = session.query(DeviceStatus).filter_by(device_id=target_device_id).first()
+
+        # If specific target not found, pick the most recently active non-simulated device
+        if not device:
+            device = (
+                session.query(DeviceStatus)
+                .filter(DeviceStatus.device_id != Config.SIMULATION_DEVICE_ID)
+                .order_by(DeviceStatus.last_seen_at.desc())
+                .first()
+            )
+
+        # Fallback to any device if no physical device has registered yet
+        if not device:
+            device = session.query(DeviceStatus).order_by(DeviceStatus.last_seen_at.desc()).first()
+
         total_events = session.query(MotionEvent).count()
-        recent_event = session.query(MotionEvent).order_by(MotionEvent.timestamp.desc()).first()
+
+        # Fetch the most recent event for this physical device (or general recent event)
+        recent_event = None
+        if device:
+            recent_event = (
+                session.query(MotionEvent)
+                .filter_by(device_id=device.device_id)
+                .order_by(MotionEvent.timestamp.desc())
+                .first()
+            )
+        if not recent_event:
+            recent_event = session.query(MotionEvent).order_by(MotionEvent.timestamp.desc()).first()
 
         if not device:
             # Default response when no device has registered yet
@@ -179,25 +235,41 @@ def get_status():
                 "current_motion_state": "NO_MOTION",
                 "is_online": False,
                 "sensor_status_label": "Not Connected",
+                "device_id": target_device_id,
+                "device_name": "ESP32 Motion Sensor",
                 "last_seen_at": None,
                 "last_motion_at": None,
-                "total_events": 0,
+                "total_events": total_events,
                 "database_type": Config.DB_TYPE,
+                "heartbeat_timeout_seconds": Config.HEARTBEAT_TIMEOUT_SECONDS,
                 "device": None
             }), 200
 
-        # Compute online state based on timeout
-        is_online = (now_utc - device.last_seen_at.replace(tzinfo=timezone.utc)) < timeout
+        # Compute online state strictly from the physical device's last_seen_at
+        last_seen = device.last_seen_at
+        if last_seen is not None:
+            if last_seen.tzinfo is None:
+                last_seen = last_seen.replace(tzinfo=timezone.utc)
+            is_online = (now_utc - last_seen) < timeout
+        else:
+            is_online = False
+
+        last_motion = device.last_motion_at
+        if last_motion is not None and last_motion.tzinfo is None:
+            last_motion = last_motion.replace(tzinfo=timezone.utc)
 
         return jsonify({
             "current_motion_state": device.current_motion_state,
             "is_online": is_online,
             "sensor_status_label": "Connected" if is_online else "Offline (Connection Pending)",
-            "last_seen_at": device.last_seen_at.isoformat() if device.last_seen_at else None,
-            "last_motion_at": device.last_motion_at.isoformat() if device.last_motion_at else None,
+            "device_id": device.device_id,
+            "device_name": device.device_name,
+            "last_seen_at": last_seen.isoformat() if last_seen else None,
+            "last_motion_at": last_motion.isoformat() if last_motion else None,
             "total_events": total_events,
             "last_event": recent_event.to_dict() if recent_event else None,
             "database_type": Config.DB_TYPE,
+            "heartbeat_timeout_seconds": Config.HEARTBEAT_TIMEOUT_SECONDS,
             "device": device.to_dict(is_online_override=is_online)
         }), 200
 

@@ -12,17 +12,20 @@ document.addEventListener('DOMContentLoaded', function () {
   // -------------------------------------------------------------------------
   // 1. API Configuration & Cloud Detection
   // -------------------------------------------------------------------------
+  const DEFAULT_PROD_API_URL = 'https://smartguard-api-c01f.onrender.com/api';
+
   function resolveApiUrl() {
     const custom = localStorage.getItem('smartguard_api_url');
     if (custom) return custom.replace(/\/+$/, '');
 
-    // If served over HTTPS (e.g. Vercel deployment), prevent mixed-content blocking
-    if (window.location.protocol === 'https:') {
-      return '/api';
+    const hostname = window.location.hostname;
+    // When served locally (localhost, 127.0.0.1, or local network IP)
+    if (hostname === 'localhost' || hostname === '127.0.0.1' || hostname.startsWith('192.168.')) {
+      return `http://${hostname}:5000/api`;
     }
 
-    // Default to local Flask backend when running locally on HTTP / localhost
-    return 'http://localhost:5000/api';
+    // Default to production Flask backend hosted on Render
+    return DEFAULT_PROD_API_URL;
   }
 
   const API_BASE_URL = resolveApiUrl();
@@ -155,8 +158,8 @@ document.addEventListener('DOMContentLoaded', function () {
         if (setCloudApiBtn) {
           setCloudApiBtn.addEventListener('click', function (e) {
             e.preventDefault();
-            const current = localStorage.getItem('smartguard_api_url') || '';
-            const newUrl = prompt('Enter your deployed Flask backend API URL (e.g., https://your-backend.onrender.com/api):', current);
+            const current = localStorage.getItem('smartguard_api_url') || DEFAULT_PROD_API_URL;
+            const newUrl = prompt(`Enter your deployed Flask backend API URL:`, current);
             if (newUrl !== null) {
               if (newUrl.trim() === '') {
                 localStorage.removeItem('smartguard_api_url');
